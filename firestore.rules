@@ -170,6 +170,14 @@ service cloud.firestore {
         (resource.data.folderId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allowedFolderIds)
       );
       allow create, update: if isAdmin() && isValidId(materialId) && isValidAdminMaterial(incoming());
+
+      // Students may only bump the download counter on materials they can read.
+      allow update: if isApproved() && isValidId(materialId) &&
+        (resource.data.folderId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allowedFolderIds) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount']) &&
+        request.resource.data.downloadCount is int &&
+        request.resource.data.downloadCount == resource.data.downloadCount + 1;
+
       allow delete: if isAdmin() && isValidId(materialId);
 
       match /chunks/{chunkId} {

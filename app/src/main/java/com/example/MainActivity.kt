@@ -637,7 +637,7 @@ fun MainAppContent(
         val isBookmarked = bookmarks.any { it.fileId == file.id }
         val bookmarkNotes = bookmarks.find { it.fileId == file.id }?.notes.orEmpty()
         val downloadProgress = state.downloadProgress[file.id]
-        val preview = driveViewModel.getLocalPreviewText(file.name)
+        val preview = driveViewModel.getLocalPreviewText(file.id, file.name)
 
         FileDetailDialog(
             file = file,

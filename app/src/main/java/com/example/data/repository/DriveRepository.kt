@@ -62,10 +62,11 @@ class DriveRepository(private val context: Context) {
     }
 
     /**
-     * Streams a material's Firestore-chunked binary into [target].
-     * Returns true if chunks existed and were written successfully.
+     * Fetches a material's full binary from the Firestore-chunked store.
+     * Returns the assembled bytes, or null when no chunks exist / fetching failed.
+     * Assigned by DriveViewModel once StudyRepository is available.
      */
-    var remoteChunkDownloader: (suspend (fileId: String, target: File, onProgress: (Float) -> Unit) -> Boolean)? = null
+    var remoteBytesFetcher: (suspend (fileId: String) -> ByteArray?)? = null
 
     private val cookieStore = java.util.concurrent.ConcurrentHashMap<String, List<okhttp3.Cookie>>()
     private val httpClient = OkHttpClient.Builder()
@@ -749,7 +750,8 @@ class DriveRepository(private val context: Context) {
     private fun executeDownloadRequest(
         request: Request,
         tempFile: File,
-        onProgress: (Float) -> Unit
+        onProgress: (Float) -> Unit,
+        confirmRetriesLeft: Int = MAX_CONFIRM_RETRIES
     ): Boolean {
         try {
             val response = httpClient.newCall(request).execute()
@@ -768,7 +770,7 @@ class DriveRepository(private val context: Context) {
             if (contentType.contains("text/html", ignoreCase = true)) {
                 val htmlText = body.string()
                 val confirmToken = extractGoogleDriveConfirmToken(htmlText)
-                if (!confirmToken.isNullOrBlank()) {
+                if (!confirmToken.isNullOrBlank() && confirmRetriesLeft > 0) {
                     val originalUrl = request.url.toString()
                     val retryUrl = if (originalUrl.contains("confirm=")) {
                         originalUrl.replace(Regex("""confirm=[^&]+"""), "confirm=$confirmToken")
@@ -776,7 +778,7 @@ class DriveRepository(private val context: Context) {
                         if (originalUrl.contains("?")) "$originalUrl&confirm=$confirmToken" else "$originalUrl?confirm=$confirmToken"
                     }
                     val retryRequest = request.newBuilder().url(retryUrl).build()
-                    return executeDownloadRequest(retryRequest, tempFile, onProgress)
+                    return executeDownloadRequest(retryRequest, tempFile, onProgress, confirmRetriesLeft - 1)
                 }
                 // HTML received when document expected; discard to avoid corrupting file
                 return false
@@ -829,8 +831,9 @@ class DriveRepository(private val context: Context) {
         accessToken: String? = null,
         onProgress: (Float) -> Unit
     ): File = withContext(Dispatchers.IO) {
-        val targetFile = File(downloadsDir, file.name)
-        val tempFile = File(downloadsDir, "${file.name}.${System.currentTimeMillis()}.tmp")
+        // Canonical per-material path: downloads/<safeId>/<safeName> (prevents traversal & name clashes)
+        val targetFile = localFileFor(file.id, file.name).also { it.parentFile?.mkdirs() }
+        val tempFile = File(targetFile.parentFile, "${targetFile.name}.${System.currentTimeMillis()}.tmp")
 
         // 0. Check if file has remote binary chunks stored in Firestore (Real Uploaded File)
         try {
@@ -1106,8 +1109,8 @@ class DriveRepository(private val context: Context) {
     }
 
     suspend fun getOrGeneratePreviewFile(file: DriveFile): File = withContext(Dispatchers.IO) {
-        val targetFile = File(downloadsDir, file.name)
-        if (targetFile.exists() && targetFile.length() > 5000) {
+        val targetFile = localFileFor(file.id, file.name).also { it.parentFile?.mkdirs() }
+        if (targetFile.isFile && targetFile.length() > 5000) {
             return@withContext targetFile
         }
 
@@ -1170,7 +1173,7 @@ class DriveRepository(private val context: Context) {
     }
 
     fun saveMobileUploadedFile(inputStream: InputStream, fileId: String, fileName: String): Long {
-        val targetFile = File(downloadsDir, fileName)
+        val targetFile = localFileFor(fileId, fileName).also { it.parentFile?.mkdirs() }
         inputStream.use { input ->
             FileOutputStream(targetFile).use { output ->
                 input.copyTo(output)
@@ -1181,36 +1184,41 @@ class DriveRepository(private val context: Context) {
     }
 
     private fun updateFileDownloadState(fileId: String, localPath: String) {
-        val updated = _currentFiles.value.map {
-            if (it.id == fileId) {
-                it.copy(isDownloaded = true, localFilePath = localPath)
-            } else {
-                it
+        _currentFiles.update { list ->
+            list.map {
+                if (it.id == fileId) {
+                    it.copy(isDownloaded = true, localFilePath = localPath)
+                } else {
+                    it
+                }
             }
         }
-        _currentFiles.value = updated
     }
 
+    /** Atomic variant of [updateFileDownloadState] for callers that already hold the file model. */
+    fun markFileDownloaded(fileId: String, localPath: String) = updateFileDownloadState(fileId, localPath)
+
     suspend fun deleteDownloadedFile(fileId: String, fileName: String): Boolean = withContext(Dispatchers.IO) {
-        val file = File(downloadsDir, fileName)
-        val deleted = if (file.exists()) file.delete() else true
-        val updated = _currentFiles.value.map {
-            if (it.id == fileId) {
-                it.copy(isDownloaded = false, localFilePath = null)
-            } else {
-                it
+        val deleted = deleteLocalCopies(fileId, fileName)
+        _currentFiles.update { list ->
+            list.map {
+                if (it.id == fileId) {
+                    it.copy(isDownloaded = false, localFilePath = null)
+                } else {
+                    it
+                }
             }
         }
-        _currentFiles.value = updated
         deleted
     }
 
-    fun getLocalFileContent(fileName: String): String? {
-        val file = File(downloadsDir, fileName)
-        return if (file.exists() && file.canRead()) {
+    fun getLocalFileContent(fileId: String, fileName: String): String? {
+        val file = localFileFor(fileId, fileName)
+        return if (file.isFile && file.canRead()) {
             try {
                 file.readText()
             } catch (e: Exception) {
+                Log.w(TAG, "Failed to read local content for ${file.name}: ${e.message}")
                 null
             }
         } else {
@@ -1219,18 +1227,19 @@ class DriveRepository(private val context: Context) {
     }
 
     fun updateMaterialInCurrentFiles(updatedFile: DriveFile) {
-        val updated = _currentFiles.value.map {
-            if (it.id == updatedFile.id) {
-                val local = File(downloadsDir, updatedFile.name)
-                updatedFile.copy(
-                    isDownloaded = local.exists(),
-                    localFilePath = if (local.exists()) local.absolutePath else null
-                )
-            } else {
-                it
+        _currentFiles.update { list ->
+            list.map {
+                if (it.id == updatedFile.id) {
+                    val local = localFileFor(updatedFile.id, updatedFile.name)
+                    updatedFile.copy(
+                        isDownloaded = local.isFile,
+                        localFilePath = if (local.isFile) local.absolutePath else null
+                    )
+                } else {
+                    it
+                }
             }
         }
-        _currentFiles.value = updated
     }
 
     fun removeMaterialFromList(fileId: String) {

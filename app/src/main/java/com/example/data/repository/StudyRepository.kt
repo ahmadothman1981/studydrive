@@ -222,6 +222,23 @@ class StudyRepository(private val db: FirebaseFirestore) {
             Log.e(TAG, "Error recording download: ${e.message}", e)
             throw e
         }
+        incrementMaterialDownloadCount(download.fileId)
+    }
+
+    /**
+     * Best-effort counter update shown on the admin dashboard. Admins may write
+     * `admin_materials`, so students can bump this field via security rules;
+     * failures here must never break the local download flow.
+     */
+    private suspend fun incrementMaterialDownloadCount(fileId: String) {
+        try {
+            db.collection("admin_materials").document(fileId)
+                .update("downloadCount", FieldValue.increment(1))
+                .await()
+        } catch (e: Exception) {
+            // Document may not exist in admin_materials (sample/local material) — ignore.
+            Log.d(TAG, "Could not increment downloadCount for $fileId: ${e.message}")
+        }
     }
 
     suspend fun removeDownload(userId: String, fileId: String) {

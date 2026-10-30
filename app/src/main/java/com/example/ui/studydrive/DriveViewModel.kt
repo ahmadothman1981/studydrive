@@ -956,7 +956,7 @@ class DriveViewModel(
         }
     }
 
-    fun getLocalPreviewText(fileName: String): String? {
-        return driveRepository.getLocalFileContent(fileName)
+    fun getLocalPreviewText(fileId: String, fileName: String): String? {
+        return driveRepository.getLocalFileContent(fileId, fileName)
     }
 }
