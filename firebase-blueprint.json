@@ -1,0 +1,224 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information, approval status, and StudyDrive preferences",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique Google user ID"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Approval status of student account"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "admin", "super_admin"],
+          "description": "User role"
+        },
+        "activeFolderId": {
+          "type": "string",
+          "description": "Currently selected Google Drive Study Materials folder ID"
+        },
+        "activeFolderName": {
+          "type": "string",
+          "description": "Name of currently selected Google Drive folder"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of profile creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["userId", "displayName", "email", "createdAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Designated administrator added by the super admin",
+      "type": "object",
+      "properties": {
+        "adminId": {
+          "type": "string",
+          "description": "Unique ID or encoded email of the admin"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the administrator"
+        },
+        "role": {
+          "type": "string",
+          "description": "Role descriptor (e.g. admin)"
+        },
+        "addedBy": {
+          "type": "string",
+          "description": "Email of super admin who granted access"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when admin was added"
+        }
+      },
+      "required": ["email", "addedBy", "createdAt"]
+    },
+    "DownloadedFile": {
+      "title": "DownloadedFile",
+      "description": "Record of a file downloaded from Google Drive to local device storage",
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "Google Drive file ID"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Name of the file"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the file"
+        },
+        "fileSizeBytes": {
+          "type": "integer",
+          "description": "File size in bytes"
+        },
+        "localFilePath": {
+          "type": "string",
+          "description": "Local cached file path on the device"
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who downloaded the file"
+        },
+        "downloadedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of download"
+        }
+      },
+      "required": ["fileId", "fileName", "mimeType", "userId", "downloadedAt"]
+    },
+    "StudyBookmark": {
+      "title": "StudyBookmark",
+      "description": "Starred study file or note bookmark",
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "Google Drive file ID"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Name of the study file"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the file"
+        },
+        "notes": {
+          "type": "string",
+          "description": "User personal study notes for this file"
+        },
+        "category": {
+          "type": "string",
+          "description": "Subject or course category"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of bookmark creation"
+        }
+      },
+      "required": ["fileId", "fileName", "userId", "createdAt"]
+    },
+    "AdminMaterial": {
+      "title": "AdminMaterial",
+      "description": "Curated study materials published by the administrator",
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "Unique material ID or Drive file ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Study material title"
+        },
+        "category": {
+          "type": "string",
+          "description": "Subject category (e.g., Python, C++, Web, Algorithms)"
+        },
+        "grade": {
+          "type": "string",
+          "description": "Target grade (الصف الأول الثانوي / الصف الثاني الثانوي)"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "File MIME type"
+        },
+        "description": {
+          "type": "string",
+          "description": "Educational summary of the file"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "description": "File size in bytes"
+        },
+        "downloadUrl": {
+          "type": "string",
+          "description": "Drive file or download URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["fileId", "name", "category", "mimeType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile, approval status, and active study folder settings"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Administrators appointed by super admin"
+    },
+    "/users/{userId}/downloads/{downloadId}": {
+      "schema": "DownloadedFile",
+      "description": "History of files downloaded locally by the user"
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": "StudyBookmark",
+      "description": "User bookmarked study files and notes"
+    },
+    "/admin_materials/{materialId}": {
+      "schema": "AdminMaterial",
+      "description": "Study materials curated by the admin for students"
+    }
+  }
+}

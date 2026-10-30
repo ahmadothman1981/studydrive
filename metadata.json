@@ -1,0 +1,6 @@
+{
+  "name": "StudyDrive",
+  "description": "Access, browse, view, and download study materials and course files directly from Google Drive with secure user authentication.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

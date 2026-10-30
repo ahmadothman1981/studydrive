@@ -1,0 +1,195 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        (
+          (request.auth.token.email == 'ahmadothmanshoap1981@gmail.com' && request.auth.token.email_verified == true) ||
+          request.auth.token.get('superAdmin', false) == true
+        );
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() ||
+        (isSignedIn() && request.auth.token.get('admin', false) == true) ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))) ||
+        (isSignedIn() && request.auth.token.get('email_verified', false) == true &&
+         request.auth.token.get('email', '') is string &&
+         exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()))) ||
+        (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin']);
+    }
+
+    function isApproved() {
+      return isSuperAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && (data.userId == request.auth.uid || isSuperAdmin()) &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+             (!('status' in data) || (data.status in ['pending', 'approved', 'rejected'])) &&
+             (!('role' in data) || (data.role in ['student', 'admin', 'super_admin'])) &&
+             (!('activeFolderId' in data) || (data.activeFolderId is string && data.activeFolderId.size() <= 128)) &&
+             (!('activeFolderName' in data) || (data.activeFolderName is string && data.activeFolderName.size() <= 200)) &&
+             (!('allowedFolderIds' in data) || (data.allowedFolderIds is list)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             (!('updatedAt' in data) || (data.updatedAt is timestamp && data.updatedAt <= request.time));
+    }
+
+    function isValidDownloadedFile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 300 &&
+             data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 150 &&
+             (!('fileSizeBytes' in data) || data.fileSizeBytes is int) &&
+             (!('localFilePath' in data) || (data.localFilePath is string && data.localFilePath.size() <= 500)) &&
+             data.downloadedAt is timestamp && data.downloadedAt <= request.time;
+    }
+
+    function isValidStudyBookmark(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 300 &&
+             (!('mimeType' in data) || (data.mimeType is string && data.mimeType.size() <= 150)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidAdminMaterial(data) {
+      return data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 300 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
+             data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 150 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+             (!('grade' in data) || (data.grade is string && data.grade.size() <= 100)) &&
+             (!('downloadUrl' in data) || (data.downloadUrl is string && data.downloadUrl.size() <= 500)) &&
+             (!('folderId' in data) || (data.folderId is string && data.folderId.size() <= 128)) &&
+             (!('sizeBytes' in data) || data.sizeBytes is int) &&
+             (!('hasChunks' in data) || data.hasChunks is bool) &&
+             (!('totalChunks' in data) || data.totalChunks is int) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow list: if isAdmin();
+
+      // On creation, normal users cannot self-approve or self-assign folders or admin roles
+      allow create: if isOwner(userId) && isValidId(userId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'email', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'status', 'role', 'activeFolderId', 'activeFolderName', 'allowedFolderIds', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming()) &&
+                       (isSuperAdmin() || (
+                         (!('status' in incoming()) || incoming().status == 'pending') &&
+                         (!('role' in incoming()) || incoming().role == 'student') &&
+                         (!('allowedFolderIds' in incoming()) || incoming().allowedFolderIds.size() == 0)
+                       ));
+
+      // On update, students cannot tamper with status, role, or allowedFolderIds
+      allow update: if (isOwner(userId) || isAdmin()) && isValidId(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming()) &&
+                       (
+                         isSuperAdmin() ||
+                         (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'allowedFolderIds', 'updatedAt'])) ||
+                         (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'activeFolderId', 'activeFolderName', 'updatedAt']))
+                       );
+
+      // Only Super Admin can delete users (prevents rejected bypass)
+      allow delete: if isSuperAdmin() && isValidId(userId);
+
+      match /downloads/{downloadId} {
+        allow get: if isOwner(userId) && isValidId(downloadId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) && isValidId(downloadId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll(['fileId', 'fileName', 'mimeType', 'userId', 'downloadedAt']) &&
+                         incoming().keys().hasOnly(['fileId', 'fileName', 'mimeType', 'fileSizeBytes', 'localFilePath', 'userId', 'downloadedAt']) &&
+                         isValidDownloadedFile(incoming(), userId);
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(downloadId);
+      }
+
+      match /bookmarks/{bookmarkId} {
+        allow get: if isOwner(userId) && isValidId(bookmarkId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) && isValidId(bookmarkId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll(['fileId', 'fileName', 'userId', 'createdAt']) &&
+                         incoming().keys().hasOnly(['fileId', 'fileName', 'mimeType', 'notes', 'category', 'userId', 'createdAt']) &&
+                         isValidStudyBookmark(incoming(), userId);
+
+        allow update: if isOwner(userId) && isValidId(bookmarkId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidStudyBookmark(incoming(), userId) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'category', 'mimeType', 'fileName']);
+
+        allow delete: if isOwner(userId) && isValidId(bookmarkId);
+      }
+    }
+
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    match /admin_materials/{materialId} {
+      allow get, list: if isApproved() && (
+        isAdmin() ||
+        (resource.data.folderId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allowedFolderIds)
+      );
+      allow create, update: if isAdmin() && isValidId(materialId) && isValidAdminMaterial(incoming());
+      allow delete: if isAdmin() && isValidId(materialId);
+
+      match /chunks/{chunkId} {
+        allow read: if isApproved() && (
+          isAdmin() ||
+          get(/databases/$(database)/documents/admin_materials/$(materialId)).data.folderId in
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allowedFolderIds
+        );
+        allow write: if isAdmin();
+      }
+    }
+
+    match /subject_folders/{folderId} {
+      allow get, list: if isApproved();
+      allow create, update, delete: if isAdmin() && isValidId(folderId);
+    }
+
+    match /announcements/{announcementId} {
+      allow get, list: if isApproved();
+      allow create, update, delete: if isAdmin() && isValidId(announcementId);
+    }
+  }
+}
