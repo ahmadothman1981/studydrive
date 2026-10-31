@@ -1,10 +1,1 @@
-.gradle/
-build/
-.kotlin/
-local.properties
-*.jks
-debug.keystore
-.env
-app/build.gradle.zip
-.aistudio/artifacts/
-studydrive-fixes.bundle
+*.apk
